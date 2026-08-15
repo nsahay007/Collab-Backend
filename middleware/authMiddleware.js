@@ -51,3 +51,19 @@ exports.protect = async (req, res, next) => {
     res.status(401).json({ message: 'Invalid token' })
   }
 }
+
+// Public event pages may optionally reveal private records to signed-in admins.
+exports.optionalProtect = async (req, _res, next) => {
+  try {
+    const token = req.cookies?.accessToken || req.headers.authorization?.split(' ')[1]
+    if (!token) return next()
+    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    const user = await User.findById(decoded.userId).select('_id email role twoFactorEnabled')
+    if (user && !(user.role === 'admin' && user.twoFactorEnabled && decoded?.tfa !== true)) {
+      req.user = { userId: user._id, email: user.email, role: user.role }
+    }
+  } catch (_) {
+    // A public page must remain available when a stale cookie is present.
+  }
+  return next()
+}

@@ -18,6 +18,7 @@ const HackathonSchema = new mongoose.Schema({
   startDate: { type: Date },
   endDate: { type: Date },
   rules: { type: String, default: '', trim: true, maxlength: 8000 },
+  brochure: { type: String, default: '', trim: true, maxlength: 8000 },
   brochureUrl: { type: String, default: '', trim: true, maxlength: 1000 },
   brochureButtonText: { type: String, default: 'Rules & Brochure', trim: true, maxlength: 80 },
   brochureVisibility: { type: String, enum: ['public', 'participants', 'admin'], default: 'public' },
@@ -42,6 +43,9 @@ const HackathonSchema = new mongoose.Schema({
   leaderboardVisibility: { type: String, enum: ['hidden', 'public', 'participants', 'admin'], default: 'participants' },
   awards: [{
     title: { type: String, required: true, trim: true, maxlength: 180 },
+    teamName: { type: String, default: '', trim: true, maxlength: 180 },
+    projectName: { type: String, default: '', trim: true, maxlength: 180 },
+    order: { type: Number, default: 0 },
     registration: { type: mongoose.Schema.Types.ObjectId, ref: 'HackathonRegistration' },
     project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' },
     note: { type: String, default: '', trim: true, maxlength: 1000 }
@@ -60,8 +64,8 @@ const HackathonSchema = new mongoose.Schema({
   },
   phase: {
     type: String,
-    enum: ['REGISTRATIONS_OPEN', 'REGISTRATIONS_CLOSED', 'HACKATHON_OPEN', 'HACKATHON_CLOSED'],
-    default: 'REGISTRATIONS_OPEN',
+    enum: ['COMING_SOON', 'REGISTRATIONS_OPEN', 'REGISTRATIONS_CLOSED', 'EVENT_STARTED', 'EVENT_ENDED'],
+    default: 'COMING_SOON',
     index: true
   },
   archivedAt: { type: Date },
@@ -69,5 +73,12 @@ const HackathonSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 HackathonSchema.index({ startDate: 1, status: 1 })
+
+HackathonSchema.pre('validate', function normalizeLegacyEventValues(next) {
+  const legacyPhases = { HACKATHON_OPEN: 'EVENT_STARTED', HACKATHON_CLOSED: 'EVENT_ENDED' }
+  if (legacyPhases[this.phase]) this.phase = legacyPhases[this.phase]
+  if (this.visibility === 'college') this.visibility = 'private'
+  next()
+})
 
 module.exports = mongoose.model('Hackathon', HackathonSchema)

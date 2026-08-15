@@ -18,13 +18,25 @@ const toArray = (value) => Array.isArray(value)
   : typeof value === 'string'
     ? value.split(',').map((item) => item.trim()).filter(Boolean)
     : []
+const EVENT_PHASES = new Set(['COMING_SOON', 'REGISTRATIONS_OPEN', 'REGISTRATIONS_CLOSED', 'EVENT_STARTED', 'EVENT_ENDED'])
+const normalizePhase = (value) => ({ HACKATHON_OPEN: 'EVENT_STARTED', HACKATHON_CLOSED: 'EVENT_ENDED' }[value] || value)
 const pickFields = (body = {}) => {
-  const allowed = ['title', 'slug', 'description', 'organizer', 'institute', 'country', 'state', 'city', 'eventCategory', 'bannerUrl', 'logoUrl', 'theme', 'location', 'mode', 'startDate', 'endDate', 'rules', 'brochureUrl', 'brochureButtonText', 'brochureVisibility', 'eligibility', 'themes', 'prizes', 'sponsors', 'judges', 'mentors', 'faqs', 'registrationUrl', 'registrationButtonText', 'registrationOpens', 'registrationCloses', 'teamSizeMin', 'teamSizeMax', 'contactEmail', 'activeStage', 'externalEventUrl', 'completionButtonText', 'completionVisibility', 'leaderboardVisibility', 'awards', 'status', 'visibility', 'phase']
+  const allowed = ['title', 'slug', 'description', 'organizer', 'bannerUrl', 'location', 'mode', 'startDate', 'endDate', 'rules', 'brochure', 'eligibility', 'registrationUrl', 'registrationButtonText', 'registrationOpens', 'registrationCloses', 'awards', 'visibility', 'phase']
   return allowed.reduce((acc, field) => {
     if (body[field] === undefined) return acc
     if (['startDate', 'endDate', 'registrationOpens', 'registrationCloses'].includes(field) && body[field] === '') return acc
     if (field === 'themes' || field === 'prizes' || field === 'sponsors') acc[field] = toArray(body[field])
-    else if (field === 'slug') acc[field] = String(body[field]).trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
+    else if (field === 'phase') {
+      const phase = normalizePhase(body[field])
+      if (EVENT_PHASES.has(phase)) acc[field] = phase
+    } else if (field === 'awards') {
+      acc[field] = Array.isArray(body[field]) ? body[field].map((award, index) => ({
+        title: String(award?.title || '').trim().slice(0, 180),
+        teamName: String(award?.teamName || '').trim().slice(0, 180),
+        projectName: String(award?.projectName || '').trim().slice(0, 180),
+        order: Number.isFinite(Number(award?.order)) ? Number(award.order) : index
+      })).filter((award) => award.title) : []
+    } else if (field === 'slug') acc[field] = String(body[field]).trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
     else if (typeof body[field] === 'string') acc[field] = body[field].trim()
     else acc[field] = body[field]
     return acc
@@ -104,9 +116,9 @@ exports.createHackathon = async (req, res) => {
     if (!payload.title) return res.status(400).json({ message: 'Hackathon title is required' })
     if (!payload.status) payload.status = 'published'
     if (!payload.visibility) payload.visibility = 'public'
-    if (!payload.phase) payload.phase = 'REGISTRATIONS_OPEN'
+    if (!payload.phase) payload.phase = 'COMING_SOON'
     const hackathon = await Hackathon.create(payload)
-    await logAdminAction({ adminUser: adminId(req), action: 'create_hackathon', targetType: 'hackathon', targetId: hackathon._id })
+    await logAdminAction({ adminUser: adminId(req), action: 'create_event', targetType: 'event', targetId: hackathon._id })
     res.status(201).json({ hackathon })
   } catch (error) {
     console.error('Create hackathon error:', error)
@@ -139,7 +151,7 @@ exports.approveHackathon = async (req, res) => {
   try {
     const hackathon = await Hackathon.findByIdAndUpdate(req.params.id, { status: 'published', visibility: 'public', phase: 'REGISTRATIONS_OPEN' }, { new: true, runValidators: true })
     if (!hackathon) return res.status(404).json({ message: 'Hackathon not found' })
-    await logAdminAction({ adminUser: adminId(req), action: 'approve_hackathon', targetType: 'hackathon', targetId: hackathon._id })
+    await logAdminAction({ adminUser: adminId(req), action: 'publish_event', targetType: 'event', targetId: hackathon._id })
     res.json({ hackathon })
   } catch (error) {
     console.error('Approve hackathon error:', error)
@@ -164,7 +176,7 @@ exports.restoreHackathon = async (req, res) => {
   try {
     const hackathon = await Hackathon.findByIdAndUpdate(
       req.params.id,
-      { status: 'draft', visibility: 'private', phase: 'REGISTRATIONS_CLOSED', archivedAt: undefined, archivedBy: undefined },
+      { status: 'published', visibility: 'private', phase: 'COMING_SOON', archivedAt: undefined, archivedBy: undefined },
       { new: true, runValidators: true }
     )
     if (!hackathon) return res.status(404).json({ message: 'Hackathon not found' })
@@ -201,9 +213,17 @@ exports.permanentlyDeleteHackathon = async (req, res) => {
 
 exports.updateHackathon = async (req, res) => {
   try {
-    const hackathon = await Hackathon.findByIdAndUpdate(req.params.id, pickFields(req.body), { new: true, runValidators: true })
+    const updates = pickFields(req.body)
+    const hackathon = await Hackathon.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true })
     if (!hackathon) return res.status(404).json({ message: 'Hackathon not found' })
-    await logAdminAction({ adminUser: adminId(req), action: 'update_hackathon', targetType: 'hackathon', targetId: hackathon._id, details: { fields: Object.keys(req.body || {}) } })
+    const eventActions = [
+      updates.bannerUrl !== undefined && 'change_event_banner',
+      updates.visibility !== undefined && 'change_event_visibility',
+      updates.registrationUrl !== undefined && 'change_event_registration_url',
+      updates.phase !== undefined && 'change_event_phase',
+      updates.awards !== undefined && 'update_event_winners'
+    ].filter(Boolean)
+    await Promise.all((eventActions.length ? eventActions : ['update_event']).map((action) => logAdminAction({ adminUser: adminId(req), action, targetType: 'event', targetId: hackathon._id, details: { fields: Object.keys(updates) } })))
     res.json({ hackathon })
   } catch (error) {
     console.error('Update hackathon error:', error)
