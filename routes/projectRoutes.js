@@ -1,6 +1,5 @@
 const express = require('express')
 const path = require('path')
-const fs = require('fs')
 const multer = require('multer')
 const router = express.Router()
 const { z } = require('zod')
@@ -56,19 +55,9 @@ const {
   checkIn
 } = require('../validators')
 
-const uploadsDir = path.join(__dirname, '..', 'uploads')
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true })
-}
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname)
-    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9-_]/g, '_')
-    const unique = `${base}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`
-    cb(null, unique)
-  }
-})
+// Files are buffered so the storage adapter can use Vercel Blob in production
+// and the existing uploads directory during local development.
+const storage = multer.memoryStorage()
 const allowedUploadExtensions = new Set([
   '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp',
   '.mp4', '.mov', '.webm',

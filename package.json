@@ -5,9 +5,12 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "vercel-build": "node -e \"require('./app')\"",
+    "migrate:uploads": "node scripts/migrate-uploads-to-blob.js",
     "reset:db": "NODE_ENV=development node reset-database.js"
   },
   "dependencies": {
+    "@vercel/blob": "^2.0.0",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -27,6 +30,9 @@
     "redis": "^5.12.1",
     "speakeasy": "^2.0.0",
     "zod": "^4.3.6"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

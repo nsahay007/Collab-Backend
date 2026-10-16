@@ -1,5 +1,3 @@
-const fs = require('fs')
-const path = require('path')
 const mongoose = require('mongoose')
 const Project = require('../models/Project')
 const Milestone = require('../models/Milestone')
@@ -8,8 +6,8 @@ const User = require('../models/User')
 const AdminActionLog = require('../models/AdminActionLog')
 const ProjectAccessLog = require('../models/ProjectAccessLog')
 const { logAdminAction } = require('../services/adminActionLogger')
+const { removeStoredFile } = require('../services/fileStorage')
 
-const uploadsDir = path.join(__dirname, '..', 'uploads')
 const isId = (id) => mongoose.Types.ObjectId.isValid(id)
 const ids = (list = []) => list.map((value) => (value?._id || value).toString())
 const requireId = (id, res, label = 'Invalid id') => {
@@ -186,7 +184,7 @@ exports.deleteAdminProjectFile = async (req, res) => {
   project.files = project.files.filter((item) => item !== file)
   project.validation.sharedFiles = (project.validation.sharedFiles || []).filter((item) => item.filename !== file.filename)
   await project.save()
-  fs.promises.unlink(path.join(uploadsDir, path.basename(file.filename))).catch(() => {})
+  await removeStoredFile(file).catch((storageError) => console.warn('Admin storage cleanup failed:', storageError.message))
   await log(req, 'delete_project_file', 'project', project._id, { fileId: req.params.fileId, filename: file.filename })
   res.json({ message: 'File deleted' })
 }

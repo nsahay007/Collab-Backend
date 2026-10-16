@@ -4,12 +4,6 @@ const crypto = require('crypto')
 const PDFDocument = require('pdfkit')
 const Certificate = require('../models/Certificate')
 
-const ensureDir = (dirPath) => {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true })
-  }
-}
-
 const formatDate = (value) => {
   if (!value) return '-'
   try {
@@ -46,7 +40,7 @@ const createCertificateHash = ({ memberName, role, startupName, projectId, times
     .update([memberName, role, startupName, projectId, timestamp].map((value) => String(value || '')).join('|'))
     .digest('hex')
 
-const generateCertificatePdf = async ({
+const generateCertificatePdf = ({
   userName,
   userEmail,
   projectTitle,
@@ -62,17 +56,18 @@ const generateCertificatePdf = async ({
   verificationHash = '',
   verificationUrl
 }) => {
-  const uploadsRoot = path.join(__dirname, '..', 'uploads')
-  const certificatesDir = path.join(uploadsRoot, 'certificates')
-  ensureDir(certificatesDir)
-
   const filename = `startup-execution-certificate-${certificateId}.pdf`
-  const filePath = path.join(certificatesDir, filename)
-
-  await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 40 })
-    const stream = fs.createWriteStream(filePath)
-    doc.pipe(stream)
+    const chunks = []
+    doc.on('data', (chunk) => chunks.push(chunk))
+    doc.on('end', () => resolve({
+      filename,
+      relativePath: `/api/public/certificates/${certificateId}/download`,
+      certificateId,
+      buffer: Buffer.concat(chunks)
+    }))
+    doc.on('error', reject)
 
     const pageWidth = doc.page.width
     const pageHeight = doc.page.height
@@ -122,16 +117,7 @@ const generateCertificatePdf = async ({
     doc.text(`Verify: ${verificationUrl || buildVerificationUrl(certificateId)}`, 310, pageHeight - 56, { width: 360 })
 
     doc.end()
-    stream.on('finish', resolve)
-    stream.on('error', reject)
   })
-
-  return {
-    filename,
-    relativePath: `/uploads/certificates/${filename}`,
-    certificateId,
-    filePath
-  }
 }
 
 const saveCertificateRecords = async (records = []) => {
@@ -187,6 +173,7 @@ const generateValidationCertificates = async ({ project, members, milestoneSumma
       userName,
       url: result.relativePath,
       filename: result.filename,
+      buffer: result.buffer,
       issuedAt,
       role,
       startupName,
@@ -269,7 +256,7 @@ const generateProjectCertificates = async ({ project, members, milestonesComplet
       verificationUrl,
       url: result.relativePath,
       filename: result.filename,
-      filePath: result.filePath,
+      buffer: result.buffer,
       issuedAt
     }
     certificates.push(certificate)
@@ -304,6 +291,7 @@ const generateProjectCertificates = async ({ project, members, milestonesComplet
 module.exports = {
   generateValidationCertificates,
   generateProjectCertificates,
+  generateCertificatePdf,
   buildVerificationUrl,
   createCertificateHash
 }

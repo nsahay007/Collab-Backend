@@ -163,6 +163,8 @@ const ProjectSchema = new mongoose.Schema({
     sharedFiles: [{
       originalName: { type: String, required: true },
       filename: { type: String, required: true },
+      storageKey: { type: String, default: '' },
+      storageUrl: { type: String, default: '' },
       mimetype: { type: String, required: true },
       size: { type: Number, required: true },
       uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -203,6 +205,8 @@ const ProjectSchema = new mongoose.Schema({
   files: [{
     originalName: { type: String, required: true },
     filename: { type: String, required: true },
+    storageKey: { type: String, default: '' },
+    storageUrl: { type: String, default: '' },
     mimetype: { type: String, required: true },
     size: { type: Number, required: true },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

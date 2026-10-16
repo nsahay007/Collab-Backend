@@ -1,17 +1,15 @@
 const mongoose = require('mongoose')
-const fs = require('fs')
-const path = require('path')
 const Project = require('../models/Project')
 const Milestone = require('../models/Milestone')
 const HackathonRegistration = require('../models/HackathonRegistration')
 const User = require('../models/User')
 const { logAdminAction } = require('../services/adminActionLogger')
 const { logProjectAccess } = require('../services/projectAccessLogger')
+const { readStoredFile, removeStoredFile } = require('../services/fileStorage')
 
 const isObjectId = (value) => mongoose.Types.ObjectId.isValid(value)
 const adminId = (req) => req.user?._id || req.user?.userId
 const toId = (value) => (value?._id || value)?.toString()
-const uploadsDir = path.join(__dirname, '..', 'uploads')
 const findProjectFile = (project, fileId) => {
   const files = [...(project.files || []), ...(project.validation?.sharedFiles || [])]
   return files.find((item) => item._id?.toString() === fileId || item.filename === fileId)
@@ -396,9 +394,11 @@ exports.downloadAdminProjectFile = async (req, res) => {
     if (!project) return res.status(404).json({ message: 'Project not found' })
     const file = findProjectFile(project, fileId)
     if (!file?.filename) return res.status(404).json({ message: 'File not found' })
-    const filePath = path.join(uploadsDir, path.basename(file.filename))
-    if (!fs.existsSync(filePath)) return res.status(404).json({ message: 'Stored file missing' })
-    return res.download(filePath, file.originalName || path.basename(file.filename))
+    const content = await readStoredFile(file)
+    const downloadName = String(file.originalName || file.filename).replace(/[\\r\\n\"]/g, '_')
+    res.setHeader('Content-Type', file.mimetype || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`)
+    return res.send(content)
   } catch (error) {
     console.error('Admin file download error:', error)
     res.status(500).json({ message: 'Failed to download project file' })
@@ -418,7 +418,7 @@ exports.removeAdminProjectFile = async (req, res) => {
       project.validation.sharedFiles = project.validation.sharedFiles.filter((item) => item.filename !== file.filename)
     }
     await project.save()
-    fs.promises.unlink(path.join(uploadsDir, path.basename(file.filename))).catch(() => {})
+    await removeStoredFile(file).catch((storageError) => console.warn('Admin storage cleanup failed:', storageError.message))
     await logAdminAction({ adminUser: adminId(req), action: 'remove_project_file', targetType: 'project', targetId: id, details: { fileId, filename: file.filename } })
     res.json({ message: 'File removed' })
   } catch (error) {

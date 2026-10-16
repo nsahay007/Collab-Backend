@@ -1,5 +1,3 @@
-const fs = require('fs')
-const path = require('path')
 const crypto = require('crypto')
 const PDFDocument = require('pdfkit')
 const mongoose = require('mongoose')
@@ -15,6 +13,7 @@ const { generateValidationCertificates, generateProjectCertificates, buildVerifi
 const { createStartupPackageZip, createZipBuffer } = require('../services/exportService')
 const { logProjectAccess, ACCESS_TYPES } = require('../services/projectAccessLogger')
 const { logSecurityEvent } = require('../middleware/securityLogger')
+const { storeUpload, readStoredFile, removeStoredFile } = require('../services/fileStorage')
 const {
   normalizeLifecycleStage,
   normalizeLifecycleFilter,
@@ -1781,9 +1780,12 @@ exports.addProjectFile = async (req, res) => {
       return res.status(403).json({ message: 'Only team contributors can upload files' })
     }
 
+    const storedFile = await storeUpload(req.file)
     project.files.push({
       originalName: req.file.originalname,
-      filename: req.file.filename,
+      filename: storedFile.filename,
+      storageKey: storedFile.storageKey,
+      storageUrl: storedFile.storageUrl,
       mimetype: req.file.mimetype,
       size: req.file.size,
       uploadedBy: userId
@@ -1803,7 +1805,7 @@ exports.addProjectFile = async (req, res) => {
     res.status(201).json({ message: 'File uploaded', project: populated })
   } catch (error) {
     console.error('Upload file error:', error)
-    res.status(500).json({ message: 'Failed to upload file' })
+    res.status(error.status || 500).json({ message: error.message || 'Failed to upload file' })
   }
 }
 
@@ -1850,8 +1852,9 @@ exports.deleteProjectFile = async (req, res) => {
     project.buildPhase.lastActivity = new Date()
     await project.save()
 
-    const filePath = path.join(__dirname, '..', 'uploads', file.filename)
-    fs.unlink(filePath, () => {})
+    await removeStoredFile(file).catch((storageError) => {
+      console.warn('File record removed but storage cleanup failed:', storageError.message)
+    })
 
     const populated = await Project.findById(project._id)
       .populate('owner', 'name email')
@@ -1917,14 +1920,8 @@ exports.downloadProjectFile = async (req, res) => {
       return res.status(403).json({ message: 'You do not have permission to access this file' })
     }
 
-    const safeFilename = path.basename(file.filename || '')
-    if (!safeFilename) {
+    if (!file.filename) {
       return res.status(404).json({ message: 'File not found' })
-    }
-
-    const absolutePath = path.join(__dirname, '..', 'uploads', safeFilename)
-    if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'File missing on server' })
     }
 
     logSecurityEvent('file_download', req, {
@@ -1933,7 +1930,11 @@ exports.downloadProjectFile = async (req, res) => {
       source: fileInProject ? 'project_files' : 'validation_shared_files'
     })
 
-    res.download(absolutePath, file.originalName || safeFilename)
+    const content = await readStoredFile(file)
+    const downloadName = String(file.originalName || file.filename).replace(/[\\r\\n\"]/g, '_')
+    res.setHeader('Content-Type', file.mimetype || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`)
+    res.send(content)
   } catch (error) {
     console.error('Download file error:', error)
     res.status(500).json({ message: 'Failed to download file' })
@@ -2119,8 +2120,6 @@ exports.startValidation = async (req, res) => {
         if (!member?.email) return
         const cert = certMap.get(toId(member._id))
         if (!cert) return
-        const relativePath = cert.url.startsWith('/') ? cert.url.slice(1) : cert.url
-        const filePath = path.join(__dirname, '..', relativePath)
         const verifyUrl = buildVerificationUrl(cert.certificateId)
         const downloadUrl = `${apiBase}${cert.url}`
 
@@ -2145,7 +2144,7 @@ exports.startValidation = async (req, res) => {
           html,
           attachments: [{
             filename: cert.filename,
-            path: filePath,
+            content: cert.buffer,
             contentType: 'application/pdf'
           }]
         })
@@ -2888,7 +2887,7 @@ exports.downloadCertificatesZip = async (req, res) => {
 
     const entries = certificates.map((cert) => ({
       name: `certificate_${String(cert.userName || 'team_member').replace(/[^a-z0-9-_]+/gi, '_')}.pdf`,
-      data: fs.readFileSync(cert.filePath)
+      data: cert.buffer
     }))
     const zip = createZipBuffer(entries)
     const safeTitle = String(project.title || 'startup').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 80)

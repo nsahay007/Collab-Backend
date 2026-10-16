@@ -1,7 +1,7 @@
 const User = require('../models/User')
 const Project = require('../models/Project')
 const Certificate = require('../models/Certificate')
-const { createCertificateHash } = require('../services/certificateService')
+const { createCertificateHash, generateCertificatePdf } = require('../services/certificateService')
 
 const verifyCertificateRecord = (record = {}) => {
   if (!record.verificationHash || !record.verificationTimestamp) return { valid: false, expectedHash: '' }
@@ -133,5 +133,37 @@ exports.getCertificate = async (req, res) => {
   } catch (error) {
     console.error('Public certificate error:', error)
     res.status(500).json({ message: 'Failed to load certificate' })
+  }
+}
+
+exports.downloadCertificate = async (req, res) => {
+  try {
+    const certificate = await Certificate.findOne({ certificateId: req.params.certificateId })
+      .populate('project', 'title lifecycleStage')
+      .populate('college', 'name')
+      .lean()
+
+    if (!certificate) return res.status(404).json({ message: 'Certificate not found' })
+
+    const result = await generateCertificatePdf({
+      userName: certificate.userName,
+      projectTitle: certificate.startupName || certificate.projectTitle,
+      projectId: certificate.project?._id || certificate.project,
+      collegeName: certificate.college?.name || certificate.collegeName,
+      issuedAt: certificate.issuedAt,
+      certificateId: certificate.certificateId,
+      memberRole: certificate.role,
+      stageAchieved: certificate.project?.lifecycleStage || 'Startup Execution',
+      projectStatus: certificate.projectStatus || 'In Progress',
+      verificationHash: certificate.verificationHash,
+      verificationUrl: certificate.verificationUrl
+    })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`)
+    return res.send(result.buffer)
+  } catch (error) {
+    console.error('Certificate download error:', error)
+    return res.status(500).json({ message: 'Failed to generate certificate' })
   }
 }
